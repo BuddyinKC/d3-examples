@@ -1,0 +1,343 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Library Organizational Chart (D3.js)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- D3 v7 from official CDN -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --ink: #1f2937;
+      --accent: #0ea5e9;
+      --node-bg: #ffffff;
+      --node-border: #cbd5e1;
+      --node-shadow: rgba(0,0,0,.08);
+      --link: #94a3b8;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--ink); margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif; }
+    header {
+      display: grid; gap: .75rem;
+      grid-template-columns: 1fr auto auto auto;
+      padding: 1rem; border-bottom: 1px solid #e5e7eb; backdrop-filter: saturate(1.2);
+    }
+    header h1 { margin: 0; font-size: 1rem; font-weight: 600; }
+    header .controls { display: contents; }
+    header input[type="search"] {
+      width: 100%; max-width: 480px; padding: .5rem .75rem; border: 1px solid #d1d5db; border-radius: .5rem;
+    }
+    header button {
+      appearance: none; border: 1px solid #d1d5db; background: #fff; color: var(--ink);
+      padding: .5rem .75rem; border-radius: .5rem; cursor: pointer; font-weight: 600;
+    }
+    header button:hover { border-color: #94a3b8; }
+
+    #chart {
+      width: 100%; height: calc(100% - 64px);
+      position: relative;
+    }
+    svg { width: 100%; height: 100%; }
+    .link {
+      fill: none; stroke: var(--link); stroke-width: 1.5px; opacity: .8;
+    }
+    .node {
+      filter: drop-shadow(0 1px 1.5px var(--node-shadow));
+      cursor: pointer;
+    }
+    .card {
+      rx: 8; ry: 8; fill: var(--node-bg); stroke: var(--node-border); stroke-width: 1.25px;
+    }
+    .badge {
+      font-size: 10px; font-weight: 700; fill: #0369a1;
+    }
+    .name { font-size: 13px; font-weight: 700; }
+    .title { font-size: 12px; fill: #334155; }
+    .unit  { font-size: 11px; fill: #64748b; }
+    .highlight .card { stroke: var(--accent); stroke-width: 2px; }
+    .collapsed .card { stroke-dasharray: 4 3; }
+    .node:focus-visible .card { stroke: #ef4444; stroke-width: 2px; }
+
+    /* Tooltip */
+    .tooltip {
+      position: absolute; pointer-events: none;
+      background: #111827; color: #f8fafc;
+      padding: .5rem .75rem; border-radius: .5rem; font-size: 12px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.2); transform: translate(-50%, -120%);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Library Organizational Chart</h1>
+    <input id="search" type="search" placeholder="Search name, title, or unit…" aria-label="Search org chart" />
+    <button id="expandAll" type="button">Expand all</button>
+    <button id="collapseAll" type="button">Collapse all</button>
+    <button id="exportPng" type="button">Export PNG</button>
+  </header>
+
+  <div id="chart" role="region" aria-label="Organizational chart">
+    <!-- D3 injects the SVG here -->
+    <div id="tooltip" class="tooltip" hidden></div>
+  </div>
+
+  <script>
+    // 1) Replace this object with your own hierarchy (Director → divisions → departments → teams).
+    //    Keep "name" and "title" fields; "unit" and "contact" are optional.
+    const orgData = {
+      name: "Alex Morgan", title: "Library Director", unit: "River City Library System",
+      contact: { email: "amorgan@rivercitylib.org", phone: "555-1000" },
+      children: [
+        {
+          name: "Priya Shah", title: "Associate Director, Public Services", unit: "Public Services",
+          children: [
+            { name: "Diego Alvarez", title: "Head of Reference", unit: "Reference & Instruction" },
+            { name: "Maya Greene", title: "Head of Circulation", unit: "Access Services" },
+            { name: "Iris Nolan", title: "Branch Services Manager", unit: "Branches",
+              children: [
+                { name: "Jordan Lee", title: "Westside Branch Lead", unit: "Westside Branch" },
+                { name: "Samira Khan", title: "Eastside Branch Lead", unit: "Eastside Branch" }
+              ]
+            }
+          ]
+        },
+        {
+          name: "Noah Brooks", title: "Associate Director, Collections & Tech", unit: "Technical Services",
+          children: [
+            { name: "Renee Porter", title: "Head of Acquisitions", unit: "Acquisitions" },
+            { name: "Hiro Tanaka", title: "Head of Cataloging & Metadata", unit: "Metadata Services" },
+            { name: "Buddy Pennington", title: "Head of Systems & Technology", unit: "Systems & Technology",
+              children: [
+                { name: "Ada Finch", title: "Library Systems Administrator", unit: "ILS / Discovery" },
+                { name: "Omar Reyes", title: "Web & UX Engineer", unit: "Web Services" },
+                { name: "Lena Ortiz", title: "Digital Repository Manager", unit: "Digital Initiatives" }
+              ]
+            }
+          ]
+        },
+        {
+          name: "Kim Park", title: "Director of Development & Outreach", unit: "Development & Outreach",
+          children: [
+            { name: "Aisha Patel", title: "Community Engagement Librarian", unit: "Outreach" },
+            { name: "Theo Ramos", title: "Programming Coordinator", unit: "Adult & Teen Programs" }
+          ]
+        }
+      ]
+    };
+
+    // 2) Chart configuration
+    const nodeW = 210, nodeH = 74, nodePad = 12;
+    const dx = 64, dy = 260; // vertical/horizontal spacing
+    const duration = 300;
+
+    const chart = document.getElementById('chart');
+    const tooltip = document.getElementById('tooltip');
+
+    const svg = d3.select('#chart').append('svg')
+      .attr('role', 'img')
+      .attr('aria-label', 'Organization chart')
+      .attr('tabindex', '0');
+
+    const g = svg.append('g'); // zoom container
+
+    const zoom = d3.zoom().scaleExtent([0.4, 2]).on('zoom', (event) => g.attr('transform', event.transform));
+    svg.call(zoom);
+
+    const tree = d3.tree().nodeSize([dx, dy]);
+    const diagonal = d3.linkHorizontal().x(d => d.y).y(d => d.x);
+
+    // Prepare hierarchy & collapse initially
+    const root = d3.hierarchy(orgData);
+    root.x0 = 0; root.y0 = 0;
+    root.descendants().forEach((d, i) => {
+      d.id = i;
+      if (d.depth && d.children) d._children = d.children; // collapse all except root
+      if (d.depth > 1) d.children = null;
+    });
+
+    // Resize observer for responsive SVG
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      svg.attr('width', width).attr('height', height);
+      update(root);
+      // Center root on first render
+      if (!svg.__centered) {
+        svg.__centered = true;
+        svg.call(zoom.transform, d3.zoomIdentity.translate(80, height / 2));
+      }
+    });
+    ro.observe(chart);
+
+    function update(source) {
+      // Compute new tree layout
+      tree(root);
+      const nodes = root.descendants();
+      const links = root.links();
+
+      // Compute extents for viewbox padding
+      let left = root, right = root;
+      root.eachBefore(n => { if (n.x < left.x) left = n; if (n.x > right.x) right = n; });
+      const height = Math.max(500, right.x - left.x + dx * 2);
+
+      // Links
+      const link = g.selectAll('path.link').data(links, d => d.target.id);
+      link.join(
+        enter => enter.append('path').attr('class', 'link')
+          .attr('d', d => diagonal({ source: { x: source.x0, y: source.y0 }, target: { x: source.x0, y: source.y0 } }))
+          .call(enter => enter.transition().duration(duration).attr('d', diagonal)),
+        update => update.transition().duration(duration).attr('d', diagonal),
+        exit => exit.transition().duration(duration)
+          .attr('d', d => diagonal({ source: { x: source.x, y: source.y }, target: { x: source.x, y: source.y } }))
+          .remove()
+      );
+
+      // Nodes
+      const node = g.selectAll('g.node').data(nodes, d => d.id);
+      const nodeEnter = node.enter().append('g')
+        .attr('class', d => `node${d._children ? ' collapsed' : ''}`)
+        .attr('transform', d => `translate(${source.y0},${source.x0})`)
+        .attr('role', 'treeitem')
+        .attr('tabindex', 0)
+        .attr('aria-expanded', d => d.children ? 'true' : 'false')
+        .on('click', (_, d) => toggle(d))
+        .on('keydown', (event, d) => {
+          // Basic keyboard support (Space/Enter to toggle)
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(d); }
+        })
+        .on('mousemove', (event, d) => showTip(event, d))
+        .on('mouseleave', hideTip);
+
+      // Card
+      nodeEnter.append('rect')
+        .attr('class', 'card')
+        .attr('width', nodeW).attr('height', nodeH)
+        .attr('x', -nodeW/2).attr('y', -nodeH/2);
+
+      // Badge (depth)
+      nodeEnter.append('text').attr('class', 'badge')
+        .attr('x', -nodeW/2 + 10).attr('y', -nodeH/2 + 16)
+        .text(d => (d.depth === 0 ? 'Director' : d.depth === 1 ? 'Division' : d.depth === 2 ? 'Department' : 'Team'));
+
+      // Name, title, unit
+      nodeEnter.append('text').attr('class', 'name')
+        .attr('text-anchor', 'middle').attr('y', -6)
+        .text(d => d.data.name);
+      nodeEnter.append('text').attr('class', 'title')
+        .attr('text-anchor', 'middle').attr('y', 12)
+        .text(d => d.data.title || '');
+      nodeEnter.append('text').attr('class', 'unit')
+        .attr('text-anchor', 'middle').attr('y', 28)
+        .text(d => d.data.unit || '');
+
+      // Update + transition
+      node.merge(nodeEnter).transition().duration(duration)
+        .attr('transform', d => `translate(${d.y},${d.x})`)
+        .attr('aria-expanded', d => d.children ? 'true' : 'false')
+        .attr('class', d => `node${d._children ? ' collapsed' : ''}`);
+
+      node.exit().transition().duration(duration)
+        .attr('transform', d => `translate(${source.y},${source.x})`)
+        .remove();
+
+      svg.attr('viewBox', [0, left.x - dx, nodes.length ? (root.height + 1) * dy + nodeW : nodeW, height])
+         .attr('preserveAspectRatio', 'xMinYMid meet');
+
+      // Stash positions for smooth transitions
+      root.eachBefore(d => { d.x0 = d.x; d.y0 = d.y; });
+    }
+
+    function toggle(d) {
+      if (d.children) {
+        d._children = d.children;
+        d.children = null;
+      } else {
+        d.children = d._children;
+        d._children = null;
+      }
+      update(d);
+    }
+
+    // 3) Search/filter
+    const searchEl = document.getElementById('search');
+    searchEl.addEventListener('input', () => {
+      const q = searchEl.value.trim().toLowerCase();
+      const nodes = g.selectAll('g.node');
+      if (!q) {
+        nodes.classed('highlight', false);
+        hideTip();
+        return;
+      }
+      nodes.each(function(d) {
+        const text = `${d.data.name} ${d.data.title || ''} ${d.data.unit || ''}`.toLowerCase();
+        const match = text.includes(q);
+        d3.select(this).classed('highlight', match);
+        // Expand path to matched nodes
+        if (match) {
+          let p = d;
+          while (p) {
+            if (p._children) { p.children = p._children; p._children = null; }
+            p = p.parent;
+          }
+        }
+      });
+      update(root);
+    });
+
+    // 4) Expand/collapse all
+    document.getElementById('expandAll').addEventListener('click', () => {
+      root.descendants().forEach(d => { if (d._children) { d.children = d._children; d._children = null; }});
+      update(root);
+    });
+    document.getElementById('collapseAll').addEventListener('click', () => {
+      root.descendants().forEach(d => { if (d.depth && d.children) { d._children = d.children; d.children = null; }});
+      update(root);
+    });
+
+    // 5) Tooltip
+    function showTip(event, d) {
+      const c = d.data.contact || {};
+      tooltip.hidden = false;
+      tooltip.innerHTML = `
+        <strong>${d.data.name}</strong><br/>
+        ${d.data.title || ''}${d.data.unit ? ' — ' + d.data.unit : ''}<br/>
+        ${c.email ? '📧 ' + c.email + '<br/>' : ''}${c.phone ? '☎️ ' + c.phone : ''}
+      `;
+      const { clientX: x, clientY: y } = event;
+      tooltip.style.left = x + 'px'; tooltip.style.top = y + 'px';
+    }
+    function hideTip() { tooltip.hidden = true; }
+
+    // 6) Export PNG (serialize SVG → draw to Canvas → toDataURL)
+    document.getElementById('exportPng').addEventListener('click', () => {
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(svg.node());
+      const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+
+      const img = new Image();
+      img.onload = function() {
+        const canvas = document.createElement('canvas');
+        // Use current SVG dimensions
+        const rect = svg.node().getBoundingClientRect();
+        canvas.width = rect.width; canvas.height = rect.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height); // Canvas drawImage API
+        URL.revokeObjectURL(url);
+        const png = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = png; a.download = 'library-org-chart.png';
+        a.click();
+      };
+      img.src = url;
+    });
+
+    // Initial render
+    update(root);
+  </script>
+  	<!-- External JS libraries -->
+	<script src="https://d3js.org/d3.v5.min.js"></script>
+	<script src="https://code.jquery.com/jquery-3.4.1.slim.min.js" integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n" crossorigin="anonymous"></script>
+	<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous"></script>
+	<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js" integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6" crossorigin="anonymous"></script>
+</body>
